@@ -1,11 +1,36 @@
-$anthias-purple-1: #270035;
-$anthias-purple-2: #492955;
-$anthias-purple-3: #52335D;
-$anthias-purple-4: #D4CCD7;
-$anthias-purple-5: #8819C7;
-$anthias-yellow-1: #FFF963;
-$anthias-yellow-2: #FFD800;
-$anthias-yellow-3: #FFE11A;
-$anthias-yellow-4: #FFF3A3;
+// Checkin Cast Brand Colors
+// Official Checkin brand palette
 
-$anthias-yellow-gradient: linear-gradient(133.73deg, $anthias-yellow-1, $anthias-yellow-2);
+// Core brand colors
+$checkin-pink: #FE8E9F;           // Primary pink accent
+$checkin-pink-soft: #FEBCC6;      // 70% tint
+$checkin-pink-subtle: #FFEBEE;    // 30% tint
+
+$checkin-purple: #4C042D;         // Primary purple
+
+$checkin-sand: #FFF1D1;           // Sand background
+$checkin-sand-soft: #FFF6E0;      // 70% tint
+$checkin-sand-subtle: #FFFBF5;    // 30% tint
+
+$checkin-white: #FFFFFF;
+
+// Derived colors for dark mode
+$checkin-purple-dark: #1A0110;    // Deep purple background
+$checkin-purple-card: #2D0620;    // Card background in dark mode
+
+// Gradients
+$checkin-pink-gradient: linear-gradient(133.73deg, $checkin-pink, $checkin-pink-soft);
+$checkin-purple-gradient: linear-gradient(133.73deg, $checkin-purple, #6B1548);
+
+// Legacy aliases for compatibility with existing Anthias styles
+$anthias-purple-1: $checkin-purple;
+$anthias-purple-2: #6B1548;
+$anthias-purple-3: $checkin-purple-dark;
+$anthias-purple-4: $checkin-sand-soft;
+$anthias-purple-5: #8A2A5E;
+$anthias-yellow-1: $checkin-pink;
+$anthias-yellow-2: $checkin-pink-soft;
+$anthias-yellow-3: $checkin-pink-subtle;
+$anthias-yellow-4: $checkin-sand;
+
+$anthias-yellow-gradient: $checkin-pink-gradient;
