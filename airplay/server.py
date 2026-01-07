@@ -12,6 +12,7 @@ import sys
 import threading
 from time import sleep
 
+import redis
 import zmq
 
 logging.basicConfig(
@@ -35,7 +36,7 @@ class AirPlayServer:
     def __init__(self):
         self.device_name = os.getenv('AIRPLAY_NAME', 'Checkin Cast')
         self.zmq_server_url = os.getenv(
-            'ZMQ_SERVER_URL', 'tcp://anthias-server:10001'
+            'ZMQ_SERVER_URL', 'tcp://checkin-server:10001'
         )
         self.audio_output = os.getenv('AUDIO_OUTPUT', 'hdmi')
         self.resolution = os.getenv('AIRPLAY_RESOLUTION', '1920x1080')
@@ -45,6 +46,11 @@ class AirPlayServer:
         self.state = STATE_IDLE
         self.running = False
         self.client_name = None
+        self.restart_requested = False
+
+        # Connect to Redis to read settings and listen for updates
+        self.redis = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
+        self._load_settings_from_redis()
 
         # ZMQ publisher for session events
         self.context = zmq.Context()
@@ -55,8 +61,40 @@ class AirPlayServer:
         # Also create a push socket for direct viewer communication
         self.push_socket = self.context.socket(zmq.PUSH)
         self.push_socket.setsockopt(zmq.LINGER, 0)
-        self.push_socket.connect('tcp://anthias-server:5559')
+        self.push_socket.connect('tcp://checkin-server:5559')
         sleep(0.5)
+
+    def _load_settings_from_redis(self):
+        """Load AirPlay settings from Redis if available."""
+        try:
+            name = self.redis.get('airplay_name')
+            if name:
+                self.device_name = name
+                logger.info(f'Loaded AirPlay name from Redis: {name}')
+        except redis.RedisError as e:
+            logger.warning(f'Could not load settings from Redis: {e}')
+
+    def _start_command_listener(self):
+        """Start a thread to listen for restart commands via Redis pubsub."""
+        def listener():
+            try:
+                pubsub = self.redis.pubsub()
+                pubsub.subscribe('airplay_cmd')
+                logger.info('Subscribed to airplay_cmd channel')
+
+                for message in pubsub.listen():
+                    if message['type'] == 'message':
+                        cmd = message['data']
+                        logger.info(f'Received command: {cmd}')
+                        if cmd == 'restart':
+                            self._load_settings_from_redis()
+                            self.restart_requested = True
+                            self.stop()
+            except redis.RedisError as e:
+                logger.error(f'Redis listener error: {e}')
+
+        thread = threading.Thread(target=listener, daemon=True)
+        thread.start()
 
     def _build_command(self):
         """Build the uxplay command with appropriate arguments."""
@@ -65,6 +103,7 @@ class AirPlayServer:
         cmd = [
             'uxplay',
             '-n', self.device_name,
+            '-nh',  # Don't append hostname to device name
             '-s', f'{width}x{height}',
             '-fps', self.framerate,
             '-vs', 'fbdevsink',  # Output to framebuffer
@@ -206,6 +245,7 @@ class AirPlayServer:
 def main():
     """Main entry point for the AirPlay server."""
     server = AirPlayServer()
+    server._start_command_listener()
 
     def signal_handler(signum, frame):
         logger.info(f'Received signal {signum}, shutting down...')
@@ -218,9 +258,14 @@ def main():
     while True:
         try:
             server.start()
+            # If we got here due to a restart request, continue the loop
+            if server.restart_requested:
+                server.restart_requested = False
+                logger.info('Restarting AirPlay server with new settings...')
+                continue
         except Exception as e:
             logger.error(f'AirPlay server error: {e}')
-            sleep(5)  # Wait before retry
+        sleep(5)  # Wait before retry
 
 
 if __name__ == '__main__':

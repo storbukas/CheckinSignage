@@ -579,6 +579,10 @@ class AirPlayViewV2(APIView):
             settings['airplay_enabled'] = data['enabled']
         if 'name' in data:
             settings['airplay_name'] = data['name']
+            # Store in Redis for airplay container to read
+            r.set('airplay_name', data['name'])
+            # Signal airplay server to restart with new name
+            r.publish('airplay_cmd', 'restart')
 
         settings.save()
 
