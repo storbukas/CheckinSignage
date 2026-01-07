@@ -1,13 +1,13 @@
 # vim: ft=yaml.docker-compose
 
 services:
-  anthias-wifi-connect:
+  checkin-wifi-connect:
     image: checkinsignage/wifi-connect:${DOCKER_TAG}-${DEVICE_TYPE}
     build:
       context: .
       dockerfile: docker/Dockerfile.wifi-connect
     depends_on:
-      - anthias-viewer
+      - checkin-viewer
     environment:
       PORTAL_LISTENING_PORT: 8000
       CHECK_CONN_FREQ: 10
@@ -20,7 +20,7 @@ services:
         source: /run/dbus/system_bus_socket
         target: /run/dbus/system_bus_socket
 
-  anthias-server:
+  checkin-server:
     image: checkinsignage/server:${DOCKER_TAG}-${DEVICE_TYPE}
     build:
       context: .
@@ -46,19 +46,19 @@ services:
     labels:
       io.balena.features.supervisor-api: '1'
 
-  anthias-viewer:
+  checkin-viewer:
     image: checkinsignage/viewer:${DOCKER_TAG}-${DEVICE_TYPE}
     build:
       context: .
       dockerfile: docker/Dockerfile.viewer
     mem_limit: ${VIEWER_MEMORY_LIMIT_KB}k
     depends_on:
-      - anthias-server
+      - checkin-server
     environment:
       - HOME=/data
       - PORT=80
       - NOREFRESH=1
-      - LISTEN=anthias-nginx
+      - LISTEN=checkin-nginx
     extra_hosts:
       - "host.docker.internal:host-gateway"
     privileged: true
@@ -74,13 +74,13 @@ services:
     labels:
       io.balena.features.supervisor-api: '1'
 
-  anthias-websocket:
+  checkin-websocket:
     image: checkinsignage/websocket:${DOCKER_TAG}-${DEVICE_TYPE}
     build:
       context: .
       dockerfile: docker/Dockerfile.websocket
     depends_on:
-      - anthias-server
+      - checkin-server
     environment:
       - HOME=/data
       - LISTEN=0.0.0.0
@@ -92,13 +92,13 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
 
-  anthias-celery:
+  checkin-celery:
     image: checkinsignage/celery:${DOCKER_TAG}-${DEVICE_TYPE}
     build:
       context: .
       dockerfile: docker/Dockerfile.celery
     depends_on:
-      - anthias-server
+      - checkin-server
       - redis
     environment:
       - HOME=/data
@@ -127,7 +127,7 @@ services:
     volumes:
       - redis-data:/var/lib/redis
 
-  anthias-nginx:
+  checkin-nginx:
     image: checkinsignage/nginx:${DOCKER_TAG}-${DEVICE_TYPE}
     build:
       context: .
@@ -137,8 +137,8 @@ services:
     environment:
       - HOME=/data
     depends_on:
-      - anthias-server
-      - anthias-websocket
+      - checkin-server
+      - checkin-websocket
     restart: always
     volumes:
       - resin-data:/data:ro
@@ -148,20 +148,20 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
 
-  anthias-airplay:
+  checkin-airplay:
     image: checkinsignage/airplay:${DOCKER_TAG}-${DEVICE_TYPE}
     build:
       context: .
       dockerfile: docker/Dockerfile.airplay
     depends_on:
-      - anthias-server
+      - checkin-server
       - redis
     environment:
       - AIRPLAY_NAME=${AIRPLAY_NAME:-Checkin Cast}
       - AIRPLAY_RESOLUTION=1920x1080
       - AIRPLAY_FRAMERATE=30
       - AUDIO_OUTPUT=${AUDIO_OUTPUT:-hdmi}
-      - ZMQ_SERVER_URL=tcp://anthias-server:10001
+      - ZMQ_SERVER_URL=tcp://checkin-server:10001
     network_mode: host
     privileged: true
     restart: always
@@ -173,4 +173,4 @@ services:
 volumes:
   resin-data:
   redis-data:
-  screenly-data:
+  checkin-data:
