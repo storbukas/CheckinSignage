@@ -44,9 +44,9 @@ else:
         'django-insecure-7rz*$)g6dk&=h-3imq2xw*iu!zuhfb&w6v482_vs!w@4_gha=j'  # noqa: E501
     )
 
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'anthias', 'anthias-server']
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'checkin', 'checkin-server']
 
-CSRF_TRUSTED_ORIGINS = ['http://anthias']
+CSRF_TRUSTED_ORIGINS = ['http://checkin', 'http://checkin-server']
 
 
 # Application definition
