@@ -87,6 +87,7 @@ class NativeAirPlayServer:
             '-nh',  # Don't append hostname
             '-s', f'{width}x{height}',
             '-fps', self.framerate,
+            '-vs', 'kmssink',  # Use KMS for hardware overlay on Pi 5
         ]
 
         # Audio output - use ALSA for headless Pi
