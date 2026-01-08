@@ -582,6 +582,11 @@ class AirPlayViewV2(APIView):
 
         if 'enabled' in data:
             settings['airplay_enabled'] = data['enabled']
+            # Start or stop the airplay service based on enabled state
+            if data['enabled']:
+                r.publish('airplay_cmd', 'start')
+            else:
+                r.publish('airplay_cmd', 'stop')
         if 'name' in data:
             settings['airplay_name'] = data['name']
             r.set('airplay_name', data['name'])

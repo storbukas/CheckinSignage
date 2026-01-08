@@ -39,7 +39,7 @@ class AirPlayServer:
             'ZMQ_SERVER_URL', 'tcp://checkin-server:10001'
         )
         self.audio_output = os.getenv('AUDIO_OUTPUT', 'hdmi')
-        self.resolution = os.getenv('AIRPLAY_RESOLUTION', '')  # Empty = auto-detect
+        self.resolution = os.getenv('AIRPLAY_RESOLUTION', '1920x1080')
         self.framerate = os.getenv('AIRPLAY_FRAMERATE', '30')
 
         self.process = None
@@ -47,6 +47,7 @@ class AirPlayServer:
         self.running = False
         self.client_name = None
         self.restart_requested = False
+        self.enabled = True  # Can be toggled via Redis command
 
         # Connect to Redis to read settings and listen for updates
         self.redis = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
@@ -63,66 +64,6 @@ class AirPlayServer:
         self.push_socket.setsockopt(zmq.LINGER, 0)
         self.push_socket.connect('tcp://checkin-server:5559')
         sleep(0.5)
-
-    def _detect_display_resolution(self):
-        """Auto-detect the connected display resolution using KMS/DRM."""
-        try:
-            # First try to get actual framebuffer size (most accurate for current mode)
-            with open('/sys/class/graphics/fb0/virtual_size', 'r') as f:
-                size = f.read().strip()
-                if ',' in size:
-                    width, height = size.split(',')
-                    resolution = f'{width}x{height}'
-                    logger.info(f'Auto-detected framebuffer resolution: {resolution}')
-                    return resolution
-        except Exception as e:
-            logger.debug(f'Could not read framebuffer size: {e}')
-
-        try:
-            # Try kmsprint if available (most reliable)
-            result = subprocess.run(
-                ['kmsprint'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                # Parse kmsprint output for active CRTC resolution
-                # Look for lines like: Crtc 2 (92) 1920x1600@59.95
-                for line in result.stdout.split('\n'):
-                    if 'Crtc' in line and '@' in line:
-                        # Extract resolution like "1920x1600"
-                        match = re.search(r'(\d+x\d+)@', line)
-                        if match:
-                            resolution = match.group(1)
-                            logger.info(f'Auto-detected display resolution: {resolution}')
-                            return resolution
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-
-        try:
-            # Fallback: read from DRM mode file for connected HDMI
-            import glob
-            for connector in glob.glob('/sys/class/drm/card*-HDMI-*'):
-                status_file = os.path.join(connector, 'status')
-                modes_file = os.path.join(connector, 'modes')
-                try:
-                    with open(status_file, 'r') as f:
-                        if f.read().strip() == 'connected':
-                            with open(modes_file, 'r') as mf:
-                                modes = mf.read().strip().split('\n')
-                                if modes and modes[0]:
-                                    resolution = modes[0]
-                                    logger.info(f'Auto-detected display resolution from DRM: {resolution}')
-                                    return resolution
-                except Exception:
-                    continue
-        except Exception as e:
-            logger.warning(f'Could not read DRM modes: {e}')
-
-        # Final fallback
-        logger.warning('Could not auto-detect resolution, using 1920x1080')
-        return '1920x1080'
 
     def _load_settings_from_redis(self):
         """Load AirPlay settings from Redis if available."""
@@ -150,6 +91,16 @@ class AirPlayServer:
                             self._load_settings_from_redis()
                             self.restart_requested = True
                             self.stop()
+                        elif cmd == 'stop':
+                            self.enabled = False
+                            self.stop()
+                        elif cmd == 'start':
+                            self.enabled = True
+                            self._load_settings_from_redis()
+                            self.restart_requested = True
+                            if not self.running:
+                                # Will be started by main loop
+                                pass
             except redis.RedisError as e:
                 logger.error(f'Redis listener error: {e}')
 
@@ -158,26 +109,20 @@ class AirPlayServer:
 
     def _build_command(self):
         """Build the uxplay command with appropriate arguments."""
-        # Auto-detect resolution if not specified
-        resolution = self.resolution if self.resolution else self._detect_display_resolution()
-        width, height = resolution.split('x')
-
+        # Don't specify resolution - let client decide dynamically
         cmd = [
             'uxplay',
             '-n', self.device_name,
             '-nh',  # Don't append hostname to device name
-            '-s', f'{width}x{height}@{self.framerate}',  # Request resolution with refresh rate
             '-fps', self.framerate,
-            '-vsync', 'no',  # No timestamps - best for live streaming/screen mirroring
-            '-avdec',  # Force software decoding (Pi 5 has no hardware decoder)
-            '-vs', 'kmssink',  # Use KMS video sink for framebuffer
-            '-fs',  # Fullscreen mode
-            '-reset', '0',  # Don't reset on silence (prevents disconnects)
+            '-vs', 'kmssink',  # Output to KMS for fullscreen
+            '-fs',  # Force fullscreen
+            '-reset', '0',  # Never timeout on silence
         ]
 
         # Audio output configuration
         if self.audio_output == 'hdmi':
-            cmd.extend(['-as', 'alsasink device=hw:0,0'])
+            cmd.extend(['-as', 'alsasink device=hw:0'])
         elif self.audio_output == 'headphones':
             cmd.extend(['-as', 'alsasink device=hw:1,0'])
         else:
@@ -322,12 +267,20 @@ def main():
 
     while True:
         try:
-            server.start()
-            # If we got here due to a restart request, continue the loop
-            if server.restart_requested:
-                server.restart_requested = False
-                logger.info('Restarting AirPlay server with new settings...')
-                continue
+            if server.enabled:
+                server.start()
+                # If we got here due to a restart request, continue the loop
+                if server.restart_requested:
+                    server.restart_requested = False
+                    logger.info('Restarting AirPlay server with new settings...')
+                    continue
+            else:
+                # AirPlay is disabled, just wait
+                logger.info('AirPlay server disabled, waiting...')
+                server._publish_state(STATE_IDLE)
+                while not server.enabled:
+                    sleep(1)
+                logger.info('AirPlay server re-enabled')
         except Exception as e:
             logger.error(f'AirPlay server error: {e}')
         sleep(5)  # Wait before retry
