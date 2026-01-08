@@ -94,3 +94,11 @@ More details about generating self-signed certificates can be found [here](https
 ## Wi-Fi Setup
 
 - Read the [Wi-Fi Setup](wifi-setup.md) page for more details on how to set up Wi-Fi on the Raspberry Pi.
+
+## CheckinSignage Setup Guide
+
+- For a complete walkthrough of setting up CheckinSignage on a new Raspberry Pi, see the [CheckinSignage Setup Guide](checkin-signage-setup-guide.md).
+
+## AirPlay Support
+
+- See the [AirPlay documentation](AIRPLAY.md) for details on configuring AirPlay screen mirroring.

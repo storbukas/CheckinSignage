@@ -1,72 +1,51 @@
 # AirPlay Support for Checkin Signage
 
-Checkin Signage includes AirPlay support via [uxplay](https://github.com/FDH2/UxPlay), allowing you to mirror your iOS/macOS device screen directly to the signage display.
+Checkin Signage includes AirPlay support via [UxPlay](https://github.com/FDH2/UxPlay) (using a [custom fork](https://github.com/storbukas/CheckinCast)), allowing you to mirror your iOS/macOS device screen directly to the signage display.
 
 ## Overview
 
-AirPlay runs natively on the Raspberry Pi host (not in Docker) for optimal performance. This avoids Docker overhead and enables direct hardware video overlay via KMS/DRM.
+AirPlay runs inside a Docker container (`checkin-airplay`) with privileged access to the display hardware. The container uses `kmssink` for direct KMS/DRM video output and ALSA for audio.
+
+**Key Features:**
+- **Dynamic Resolution** - The client device decides the resolution (no fixed server-side resolution)
+- **Fullscreen Mode** - Video automatically fills the entire display
+- **Enable/Disable Toggle** - AirPlay can be toggled on/off via the web UI or API
+- **Auto-restart** - Settings changes automatically restart the AirPlay server
 
 ## Prerequisites
 
 - Raspberry Pi 5 (recommended) or Pi 4
-- Raspberry Pi OS Lite (64-bit)
+- CheckinSignage installed via Docker Compose
 - Network with mDNS/Bonjour support (most home/office networks)
 
-## Installation
+## How It Works
 
-### 1. Install Dependencies
+The AirPlay functionality is provided by the `checkin-airplay` Docker container, which:
 
-```bash
-sudo apt update
-sudo apt install -y \
-    cmake \
-    libavahi-compat-libdnssd-dev \
-    libplist-dev \
-    libgstreamer1.0-dev \
-    libgstreamer-plugins-base1.0-dev \
-    gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good \
-    gstreamer1.0-plugins-bad \
-    gstreamer1.0-libav \
-    gstreamer1.0-alsa \
-    libdrm-dev \
-    python3-redis
+1. Runs [UxPlay](https://github.com/storbukas/CheckinCast) with optimized settings
+2. Reads configuration from Redis (device name, framerate)
+3. Listens for commands via Redis pub/sub (start, stop, restart)
+4. Publishes session state via ZMQ for the web UI
+
+### Docker Container Configuration
+
+The container is defined in `docker-compose.yml.tmpl`:
+
+```yaml
+checkin-airplay:
+  image: checkinsignage/airplay:${DOCKER_TAG}-${DEVICE_TYPE}
+  environment:
+    - AIRPLAY_NAME=${AIRPLAY_NAME:-Checkin Cast}
+    - AIRPLAY_FRAMERATE=30
+    - AUDIO_OUTPUT=${AUDIO_OUTPUT:-hdmi}
+  network_mode: host
+  privileged: true
 ```
 
-### 2. Build uxplay
-
-```bash
-cd /tmp
-git clone https://github.com/CheckinCast/uxplay.git
-cd uxplay
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
-sudo make install
-```
-
-### 3. Install the Service
-
-Copy the systemd service file:
-
-```bash
-sudo cp /home/admin/CheckinSignage/bin/checkin-airplay.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable checkin-airplay
-sudo systemctl start checkin-airplay
-```
-
-> **Note:** The service file assumes the username is `admin` and the install path is `/home/admin/CheckinSignage`. Edit the service file if your setup differs.
-
-### 4. Verify Installation
-
-Check that the service is running:
-
-```bash
-sudo systemctl status checkin-airplay
-```
-
-Your device should now appear as "Checkin Cast" (or your configured name) when looking for AirPlay devices on your iOS/macOS device.
+**Important:** The container runs in `privileged` mode with `network_mode: host` to access:
+- `/dev/dri/*` - DRM/KMS display devices
+- mDNS (Avahi) for device discovery
+- ALSA audio devices
 
 ## Configuration
 
@@ -76,166 +55,187 @@ AirPlay settings can be configured through the Checkin Signage web interface und
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| Enabled | `true` | Enable/disable AirPlay receiver |
 | Device Name | `Checkin Cast` | The name shown on AirPlay device discovery |
-| Resolution | `1920x1080` | Output resolution (presets: 720p, 1080p, 1440p, 4k) |
 | Framerate | `30` | Target framerate (24, 30, or 60 fps) |
 
-### Resolution Presets
+> **Note:** Resolution is now dynamic - the client device (iPhone/iPad/Mac) determines the streaming resolution. The server no longer enforces a fixed resolution.
 
-- `720p` = 1280x720
-- `1080p` = 1920x1080
-- `1440p` = 2560x1440
-- `4k` = 3840x2160
+### API Endpoints
 
-You can also specify custom resolutions like `2560x1440`.
-
-### API Configuration
-
+**Get AirPlay status:**
 ```bash
-# Get current settings
-curl http://localhost/api/v2/airplay
+curl http://<pi-ip>/api/v2/airplay
+```
 
-# Update settings
-curl -X PATCH http://localhost/api/v2/airplay \
+Response:
+```json
+{
+  "enabled": true,
+  "name": "Checkin Cast",
+  "resolution": "dynamic",
+  "framerate": 30,
+  "state": "idle",
+  "client_name": null
+}
+```
+
+**Update settings:**
+```bash
+curl -X PATCH http://<pi-ip>/api/v2/airplay \
     -H "Content-Type: application/json" \
-    -d '{"name": "My Display", "resolution": "4k", "framerate": 24}'
+    -d '{"name": "Meeting Room Display", "framerate": 30}'
 ```
 
-Settings are saved to the configuration file and applied immediately (the AirPlay server restarts automatically).
+**Enable/Disable AirPlay:**
+```bash
+# Disable
+curl -X PATCH http://<pi-ip>/api/v2/airplay \
+    -H "Content-Type: application/json" \
+    -d '{"enabled": false}'
 
-## Testing Different Settings
+# Enable
+curl -X PATCH http://<pi-ip>/api/v2/airplay \
+    -H "Content-Type: application/json" \
+    -d '{"enabled": true}'
+```
 
-Use the included test script to experiment with different resolution/framerate combinations:
+## UxPlay Command Reference
+
+The AirPlay server uses the following UxPlay command:
 
 ```bash
-# Default: 1080p @ 30fps
-./bin/airplay_test.sh
-
-# 4K @ 30fps
-./bin/airplay_test.sh 4k
-
-# 4K @ 24fps (good for movies)
-./bin/airplay_test.sh 4k 24
-
-# 1080p @ 60fps (smooth motion)
-./bin/airplay_test.sh 1080p 60
-
-# Custom resolution
-./bin/airplay_test.sh 2560x1440 30
+uxplay -n "Device Name" -nh -fps 30 -vs kmssink -fs -reset 0 -as alsasink device=hw:0
 ```
 
-The test script stops the systemd service, runs uxplay interactively so you can see the output, and can be stopped with Ctrl+C. After testing, restart the service:
+| Option | Description |
+|--------|-------------|
+| `-n` | Device name shown in AirPlay discovery |
+| `-nh` | Don't append hostname to device name |
+| `-fps 30` | Target framerate |
+| `-vs kmssink` | Video sink (KMS for direct display output) |
+| `-fs` | Fullscreen mode |
+| `-reset 0` | Never timeout (stay running after disconnect) |
+| `-as alsasink device=hw:0` | Audio via ALSA to first HDMI output |
 
-```bash
-sudo systemctl start checkin-airplay
-```
+## Performance Recommendations
 
-## Performance Tuning
+### Framerate Selection
 
-### For 4K Content
-
-When using 4K resolution:
-- Use 24fps for movies/video content
-- Use 30fps for general mirroring
-- 60fps at 4K may cause dropped frames on Pi 5
-
-### Hardware Overlay
-
-The native AirPlay implementation uses `kmssink` for direct hardware video overlay. This means:
-- Video is rendered directly by the GPU
-- No CPU-based compositing
-- AirPlay video overlays on top of the Checkin Signage viewer
+| Use Case | Recommended FPS |
+|----------|-----------------|
+| Movies/Video content | 24 fps |
+| General mirroring | 30 fps |
+| Fast-moving content | 60 fps (may drop frames on Pi 5) |
 
 ### Audio Output
 
 Audio is routed to HDMI by default using ALSA:
-- `hw:0` = First HDMI output
+- `hw:0` = First HDMI output (default)
 - `hw:1` = Second HDMI output (on dual-HDMI boards)
 
 ## Troubleshooting
 
-### Device Not Appearing
+### Device Not Appearing in AirPlay List
 
-1. Check that Avahi is running:
+1. **Check container is running:**
+   ```bash
+   docker ps | grep airplay
+   ```
+
+2. **Check container logs:**
+   ```bash
+   docker logs checkinsignage-checkin-airplay-1 --tail 50
+   ```
+
+3. **Verify Avahi is running on host:**
    ```bash
    sudo systemctl status avahi-daemon
    ```
 
-2. Verify the service is running:
-   ```bash
-   sudo systemctl status checkin-airplay
-   journalctl -u checkin-airplay -f
-   ```
-
-3. Ensure your network allows mDNS (UDP port 5353)
+4. **Check network allows mDNS:**
+   - UDP port 5353 must be open
+   - Client and Pi must be on same network/VLAN
 
 ### Video Not Showing
 
-If AirPlay connects but video doesn't appear:
-
-1. Check that kmssink is available:
+1. **Check kmssink is available in container:**
    ```bash
-   gst-inspect-1.0 kmssink
+   docker exec checkinsignage-checkin-airplay-1 gst-inspect-1.0 kmssink
    ```
 
-2. Verify no other process is using the DRM device:
+2. **Check DRM device access:**
    ```bash
-   sudo fuser /dev/dri/card*
+   docker exec checkinsignage-checkin-airplay-1 ls -la /dev/dri/
+   ```
+
+3. **View real-time logs during connection:**
+   ```bash
+   docker logs -f checkinsignage-checkin-airplay-1
    ```
 
 ### Audio Issues
 
-If audio isn't working:
-
-1. List available ALSA devices:
+1. **List ALSA devices in container:**
    ```bash
-   aplay -l
+   docker exec checkinsignage-checkin-airplay-1 aplay -l
    ```
 
-2. Test audio output:
+2. **Test audio output:**
    ```bash
-   speaker-test -c 2 -D hw:0
+   docker exec checkinsignage-checkin-airplay-1 speaker-test -c 2 -D hw:0
    ```
 
-### Service Logs
+### Restart AirPlay Container
 
-View real-time logs:
 ```bash
-journalctl -u checkin-airplay -f
+docker restart checkinsignage-checkin-airplay-1
 ```
 
-View recent logs:
+Or via API:
 ```bash
-journalctl -u checkin-airplay --since "5 minutes ago"
+curl -X PATCH http://<pi-ip>/api/v2/airplay \
+    -H "Content-Type: application/json" \
+    -d '{"enabled": false}'
+# Wait a moment
+curl -X PATCH http://<pi-ip>/api/v2/airplay \
+    -H "Content-Type: application/json" \
+    -d '{"enabled": true}'
 ```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Raspberry Pi Host                        │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────┐ │
-│  │   uxplay    │◄───│    Redis    │◄───│  Checkin API    │ │
-│  │  (native)   │    │  (settings) │    │   (Docker)      │ │
-│  └──────┬──────┘    └─────────────┘    └─────────────────┘ │
-│         │                                                    │
-│         ▼                                                    │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │              KMS/DRM Hardware Video Overlay             ││
-│  │                  (GPU-accelerated)                       ││
-│  └─────────────────────────────────────────────────────────┘│
-│         │                                                    │
-│         ▼                                                    │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │                    HDMI Output                           ││
-│  └─────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     Raspberry Pi Host                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                    Docker Containers                         ││
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  ││
+│  │  │  airplay    │◄─│    Redis    │◄─│   checkin-server    │  ││
+│  │  │  (uxplay)   │  │  (settings) │  │   (API + Web UI)    │  ││
+│  │  └──────┬──────┘  └─────────────┘  └─────────────────────┘  ││
+│  └─────────│───────────────────────────────────────────────────┘│
+│            │ privileged                                          │
+│            ▼                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │              KMS/DRM Hardware Video Overlay                  ││
+│  │        /dev/dri/card0 (GPU-accelerated fullscreen)          ││
+│  └─────────────────────────────────────────────────────────────┘│
+│            │                                                     │
+│            ▼                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │           HDMI Output (Video + Audio via ALSA)              ││
+│  └─────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-The AirPlay server:
-1. Reads settings from Redis (updated by the web UI/API)
-2. Advertises itself via Avahi/mDNS
-3. Receives AirPlay video stream
-4. Renders directly to hardware overlay via kmssink
-5. Outputs audio via ALSA to HDMI
+**Data Flow:**
+1. User updates settings via Web UI → API writes to Redis + config file
+2. API publishes `restart` command to Redis `airplay_cmd` channel
+3. AirPlay container receives command, reloads settings, restarts UxPlay
+4. UxPlay advertises via Avahi/mDNS
+5. iOS/Mac connects, streams video
+6. UxPlay renders via `kmssink` directly to display
+7. Session state published via ZMQ to update Web UI
