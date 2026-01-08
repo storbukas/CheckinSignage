@@ -29,6 +29,14 @@ DEFAULT_RESOLUTION = '1920x1080'
 DEFAULT_FRAMERATE = '30'
 DEFAULT_AUDIO_OUTPUT = 'hdmi'
 
+# Common resolution presets
+RESOLUTION_PRESETS = {
+    '720p': '1280x720',
+    '1080p': '1920x1080',
+    '1440p': '2560x1440',
+    '4k': '3840x2160',
+}
+
 
 class NativeAirPlayServer:
     """
@@ -53,25 +61,49 @@ class NativeAirPlayServer:
 
     def _load_settings(self):
         """Load settings from Redis and config file."""
-        # Try Redis first
+        # Try Redis first for dynamic settings
         try:
             name = self.redis.get('airplay_name')
             if name:
                 self.device_name = name
                 logger.info(f'Loaded AirPlay name from Redis: {name}')
-                return
+
+            resolution = self.redis.get('airplay_resolution')
+            if resolution:
+                # Handle preset names like '4k', '1080p', etc.
+                self.resolution = RESOLUTION_PRESETS.get(resolution.lower(), resolution)
+                logger.info(f'Loaded AirPlay resolution from Redis: {self.resolution}')
+
+            framerate = self.redis.get('airplay_framerate')
+            if framerate:
+                self.framerate = str(framerate)
+                logger.info(f'Loaded AirPlay framerate from Redis: {self.framerate}')
         except redis.RedisError as e:
             logger.warning(f'Could not read from Redis: {e}')
 
-        # Fall back to config file
+        # Fall back to config file for any missing settings
         config_path = Path.home() / '.screenly' / 'screenly.conf'
         if config_path.exists():
             try:
                 config = ConfigParser()
                 config.read(config_path)
-                if config.has_option('airplay', 'airplay_name'):
-                    self.device_name = config.get('airplay', 'airplay_name')
-                    logger.info(f'Loaded AirPlay name from config: {self.device_name}')
+
+                if self.device_name == DEFAULT_NAME:
+                    if config.has_option('airplay', 'airplay_name'):
+                        self.device_name = config.get('airplay', 'airplay_name')
+                        logger.info(f'Loaded AirPlay name from config: {self.device_name}')
+
+                if self.resolution == DEFAULT_RESOLUTION:
+                    if config.has_option('airplay', 'airplay_resolution'):
+                        res = config.get('airplay', 'airplay_resolution')
+                        self.resolution = RESOLUTION_PRESETS.get(res.lower(), res)
+                        logger.info(f'Loaded AirPlay resolution from config: {self.resolution}')
+
+                if self.framerate == DEFAULT_FRAMERATE:
+                    if config.has_option('airplay', 'airplay_framerate'):
+                        self.framerate = config.get('airplay', 'airplay_framerate')
+                        logger.info(f'Loaded AirPlay framerate from config: {self.framerate}')
+
                 if config.has_option('viewer', 'audio_output'):
                     self.audio_output = config.get('viewer', 'audio_output')
             except Exception as e:

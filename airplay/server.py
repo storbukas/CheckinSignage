@@ -39,7 +39,7 @@ class AirPlayServer:
             'ZMQ_SERVER_URL', 'tcp://checkin-server:10001'
         )
         self.audio_output = os.getenv('AUDIO_OUTPUT', 'hdmi')
-        self.resolution = os.getenv('AIRPLAY_RESOLUTION', '1920x1080')
+        self.resolution = os.getenv('AIRPLAY_RESOLUTION', '')  # Empty = auto-detect
         self.framerate = os.getenv('AIRPLAY_FRAMERATE', '30')
 
         self.process = None
@@ -63,6 +63,66 @@ class AirPlayServer:
         self.push_socket.setsockopt(zmq.LINGER, 0)
         self.push_socket.connect('tcp://checkin-server:5559')
         sleep(0.5)
+
+    def _detect_display_resolution(self):
+        """Auto-detect the connected display resolution using KMS/DRM."""
+        try:
+            # First try to get actual framebuffer size (most accurate for current mode)
+            with open('/sys/class/graphics/fb0/virtual_size', 'r') as f:
+                size = f.read().strip()
+                if ',' in size:
+                    width, height = size.split(',')
+                    resolution = f'{width}x{height}'
+                    logger.info(f'Auto-detected framebuffer resolution: {resolution}')
+                    return resolution
+        except Exception as e:
+            logger.debug(f'Could not read framebuffer size: {e}')
+
+        try:
+            # Try kmsprint if available (most reliable)
+            result = subprocess.run(
+                ['kmsprint'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                # Parse kmsprint output for active CRTC resolution
+                # Look for lines like: Crtc 2 (92) 1920x1600@59.95
+                for line in result.stdout.split('\n'):
+                    if 'Crtc' in line and '@' in line:
+                        # Extract resolution like "1920x1600"
+                        match = re.search(r'(\d+x\d+)@', line)
+                        if match:
+                            resolution = match.group(1)
+                            logger.info(f'Auto-detected display resolution: {resolution}')
+                            return resolution
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        try:
+            # Fallback: read from DRM mode file for connected HDMI
+            import glob
+            for connector in glob.glob('/sys/class/drm/card*-HDMI-*'):
+                status_file = os.path.join(connector, 'status')
+                modes_file = os.path.join(connector, 'modes')
+                try:
+                    with open(status_file, 'r') as f:
+                        if f.read().strip() == 'connected':
+                            with open(modes_file, 'r') as mf:
+                                modes = mf.read().strip().split('\n')
+                                if modes and modes[0]:
+                                    resolution = modes[0]
+                                    logger.info(f'Auto-detected display resolution from DRM: {resolution}')
+                                    return resolution
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f'Could not read DRM modes: {e}')
+
+        # Final fallback
+        logger.warning('Could not auto-detect resolution, using 1920x1080')
+        return '1920x1080'
 
     def _load_settings_from_redis(self):
         """Load AirPlay settings from Redis if available."""
@@ -98,16 +158,21 @@ class AirPlayServer:
 
     def _build_command(self):
         """Build the uxplay command with appropriate arguments."""
-        width, height = self.resolution.split('x')
+        # Auto-detect resolution if not specified
+        resolution = self.resolution if self.resolution else self._detect_display_resolution()
+        width, height = resolution.split('x')
 
         cmd = [
             'uxplay',
             '-n', self.device_name,
             '-nh',  # Don't append hostname to device name
-            '-s', f'{width}x{height}',
+            '-s', f'{width}x{height}@{self.framerate}',  # Request resolution with refresh rate
             '-fps', self.framerate,
-            '-vs', 'fbdevsink',  # Output to framebuffer
-            '-vd', '1',  # Vsync
+            '-vsync', 'no',  # No timestamps - best for live streaming/screen mirroring
+            '-avdec',  # Force software decoding (Pi 5 has no hardware decoder)
+            '-vs', 'kmssink',  # Use KMS video sink for framebuffer
+            '-fs',  # Fullscreen mode
+            '-reset', '0',  # Don't reset on silence (prevents disconnects)
         ]
 
         # Audio output configuration

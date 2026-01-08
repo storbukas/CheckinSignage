@@ -1,0 +1,16 @@
+[Unit]
+Description=Checkin Cast AirPlay Server
+After=network.target avahi-daemon.service redis.service
+Wants=avahi-daemon.service
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/CheckinSignage
+ExecStart=/usr/bin/python3 /home/admin/CheckinSignage/bin/airplay_native.py
+Restart=on-failure
+RestartSec=5
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=multi-user.target

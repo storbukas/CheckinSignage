@@ -535,6 +535,8 @@ class AirPlayViewV2(APIView):
                 'properties': {
                     'enabled': {'type': 'boolean'},
                     'name': {'type': 'string'},
+                    'resolution': {'type': 'string'},
+                    'framerate': {'type': 'integer'},
                     'state': {'type': 'string'},
                     'client_name': {'type': 'string', 'nullable': True},
                 },
@@ -549,6 +551,8 @@ class AirPlayViewV2(APIView):
         return Response({
             'enabled': settings.get('airplay_enabled', True),
             'name': settings.get('airplay_name', 'Checkin Cast'),
+            'resolution': settings.get('airplay_resolution', '1920x1080'),
+            'framerate': int(settings.get('airplay_framerate', 30)),
             'state': airplay_state.decode() if airplay_state else 'unknown',
             'client_name': (
                 airplay_client.decode() if airplay_client else None
@@ -562,6 +566,8 @@ class AirPlayViewV2(APIView):
             'properties': {
                 'enabled': {'type': 'boolean'},
                 'name': {'type': 'string'},
+                'resolution': {'type': 'string'},
+                'framerate': {'type': 'integer'},
             },
         },
         responses={
@@ -574,17 +580,28 @@ class AirPlayViewV2(APIView):
     @authorized
     def patch(self, request):
         data = request.data
+        needs_restart = False
 
         if 'enabled' in data:
             settings['airplay_enabled'] = data['enabled']
         if 'name' in data:
             settings['airplay_name'] = data['name']
-            # Store in Redis for airplay container to read
             r.set('airplay_name', data['name'])
-            # Signal airplay server to restart with new name
-            r.publish('airplay_cmd', 'restart')
+            needs_restart = True
+        if 'resolution' in data:
+            settings['airplay_resolution'] = data['resolution']
+            r.set('airplay_resolution', data['resolution'])
+            needs_restart = True
+        if 'framerate' in data:
+            settings['airplay_framerate'] = int(data['framerate'])
+            r.set('airplay_framerate', str(data['framerate']))
+            needs_restart = True
 
         settings.save()
+
+        # Signal airplay server to restart if settings changed
+        if needs_restart:
+            r.publish('airplay_cmd', 'restart')
 
         # Notify viewer to reload settings
         publisher = ZmqPublisher.get_instance()

@@ -45,6 +45,8 @@ DEFAULTS = {
     'airplay': {
         'airplay_enabled': True,
         'airplay_name': 'Checkin Cast',
+        'airplay_resolution': '1920x1080',
+        'airplay_framerate': 30,
     },
 }
 CONFIGURABLE_SETTINGS = DEFAULTS['viewer'].copy()
@@ -54,6 +56,8 @@ CONFIGURABLE_SETTINGS['use_24_hour_clock'] = DEFAULTS['main'][
 CONFIGURABLE_SETTINGS['date_format'] = DEFAULTS['main']['date_format']
 CONFIGURABLE_SETTINGS['airplay_enabled'] = DEFAULTS['airplay']['airplay_enabled']
 CONFIGURABLE_SETTINGS['airplay_name'] = DEFAULTS['airplay']['airplay_name']
+CONFIGURABLE_SETTINGS['airplay_resolution'] = DEFAULTS['airplay']['airplay_resolution']
+CONFIGURABLE_SETTINGS['airplay_framerate'] = DEFAULTS['airplay']['airplay_framerate']
 
 PORT = int(getenv('PORT', 8080))
 LISTEN = getenv('LISTEN', '127.0.0.1')
