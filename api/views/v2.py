@@ -553,10 +553,8 @@ class AirPlayViewV2(APIView):
             'name': settings.get('airplay_name', 'Checkin Cast'),
             'resolution': settings.get('airplay_resolution', '1920x1080'),
             'framerate': int(settings.get('airplay_framerate', 30)),
-            'state': airplay_state.decode() if airplay_state else 'unknown',
-            'client_name': (
-                airplay_client.decode() if airplay_client else None
-            ),
+            'state': airplay_state if airplay_state else 'unknown',
+            'client_name': airplay_client if airplay_client else None,
         })
 
     @extend_schema(
