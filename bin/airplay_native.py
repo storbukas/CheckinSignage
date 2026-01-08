@@ -89,9 +89,14 @@ class NativeAirPlayServer:
             '-fps', self.framerate,
         ]
 
-        # Audio output - use PipeWire/PulseAudio on modern Pi OS
-        # The default audio sink should work for most cases
-        cmd.extend(['-as', 'pipewiresink'])
+        # Audio output - use ALSA for headless Pi
+        # hw:0 = first HDMI output, hw:1 = second HDMI output
+        if self.audio_output == 'hdmi':
+            cmd.extend(['-as', 'alsasink device=hw:0'])
+        elif self.audio_output == 'hdmi2':
+            cmd.extend(['-as', 'alsasink device=hw:1'])
+        else:
+            cmd.extend(['-as', 'alsasink'])
 
         return cmd
 
